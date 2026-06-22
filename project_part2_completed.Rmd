@@ -1,103 +1,106 @@
----
-title: "161.777 Practical Data Mining"
-author: "YOUR NAME GOES HERE"
-subtitle: Project Part 2, 2026
-output:
-  html_document: default
-  pdf_document: default
----
 
 ```{r setup, echo=TRUE, warning=FALSE, message=FALSE}
-# 加载本项目所需的所有包
-# tidyverse：提供数据整理与可视化工具（dplyr、ggplot2、tidyr等）
-# arules：用于关联规则挖掘（apriori算法、transactions对象、subset过滤等）
-# cluster：提供PAM聚类算法以及轮廓宽度计算
-# factoextra：提供fviz_nbclust（自动选择K）和fviz_cluster（聚类可视化）
+# Add any other packages you need to load here.
 library(tidyverse)
 library(arules)
 library(cluster)
 library(factoextra)
+library(tidyverse)
+library(skimr)
+library(naniar)
+library(plotly)
 
-# 读入世界价值观调查数据（NZ 2014版本），存为 wv_survey
+# Read in the data
 wv_survey <- read_csv("https://www.massey.ac.nz/~jcmarsha/161777/assessment/data/wv_survey2014.csv")
-
-# 读入国旗颜色数据，格式为 transactions（关联规则所需格式）
-# cols = 1 表示用第一列作为交易ID（国家名），其余列视为项目（颜色）
 flags <- read.transactions(
   "https://www.massey.ac.nz/~jcmarsha/161777/assessment/data/flags.txt",
   cols = 1
 )
 ```
 
----
-
-# Project part 2
-
-This part of the project has two exploratory data mining exercises. Exercise 3 uses clustering methods to explore structure in survey data. Exercise 4 uses association rules to explore patterns in transaction-style data.
-
----
-
-# Exercise 3: Clustering the New Zealand World Values Survey [32 marks]
-
----
-
-## 3.1 Initial exploration of the dataset [10 marks]
-
-```{r 3_1_exploration}
-# ── 查看数据基本结构 ──────────────────────────────────────────────────
-# glimpse() 显示每列的名称、类型及前几个值，让我们对整个数据集有直观的认识
-glimpse(wv_survey)
-
-# ── 汇总统计 ─────────────────────────────────────────────────────────
-# summary() 对每个变量计算最小值、四分位数、均值、最大值和NA数量
-# 这是快速了解各变量分布范围与缺失情况的最直接方式
-summary(wv_survey)
-
-# ── 统计每个变量的缺失值数量 ────────────────────────────────────────
-# colSums(is.na(...)) 将每列的 TRUE/FALSE 缺失标志求和，得到每列的 NA 个数
-# 然后用 enframe() 转换为两列数据框（name = 变量名, value = NA数量）
-# arrange(desc(value)) 按缺失数量从多到少排序，方便识别缺失最严重的变量
-missing_counts <- colSums(is.na(wv_survey)) |>
-  enframe(name = "Variable", value = "Missing") |>
-  arrange(desc(Missing))
-
-# 打印缺失值统计表
-missing_counts
-
-# ── 各变量分布图 ─────────────────────────────────────────────────────
-# pivot_longer() 将所有变量列"堆叠"为两列（Variable 和 Value），
-# 以便用 facet_wrap() 一次性绘制所有变量的分布直方图
+###  Exercise 3: Clustering the New Zealand World Values Survey
+#### 3.1 Initial exploration of the dataset 
+###### 1. Plots and summary tables examining the distributions of the variables. Comment on the main patterns in the distributions. 
+```{r}
+# Step 1: summary tables examining the distributions of the variables
+wv_survey |> skim()
+```
+```{r}
+# Step 2:  Distribution of each variable
 wv_survey |>
   pivot_longer(
-    cols = everything(),         # 选择所有列
-    names_to = "Variable",       # 原列名存入 Variable 列
-    values_to = "Value"          # 原数值存入 Value 列
+    cols = everything(),
+    names_to = "Variable",
+    values_to = "Value"
   ) |>
-  ggplot(aes(x = Value)) +
-  geom_histogram(bins = 10, fill = "steelblue", colour = "white") +
-  # facet_wrap 按变量名分面，scales = "free_x" 允许各面x轴独立缩放
-  facet_wrap(~ Variable, scales = "free_x") +
-  labs(
-    title = "Distribution of all 10 survey variables",
-    x = "Value",
-    y = "Count"
-  )
+  filter(!is.na(Value)) |>
+  count(Variable, Value) |>
+  ggplot(aes(x = Value, y = n, fill = Variable)) +
+  geom_col(alpha = 0.5) +
+  facet_wrap(vars(Variable), scales = "free") +
+  guides(fill = "none") +
+  labs(title = "Distribution of Each Variable",
+       x = NULL, y = "Count",
+       caption = "Data: World Values Survey 2014") 
 ```
 
-**Written answer — 3.1:**
 
-**Variable distributions:** `LifeSatisfaction` and `IncomeDecile` are spread across their full 1–10 range, with moderate right-skew indicating more respondents rate themselves in the middle-to-upper portion of satisfaction and income. `Age` shows a roughly bell-shaped distribution centred around the 40–60 year range, with fewer very young and very old respondents. `StateofHealth` and `FeelingofHappiness` are strongly skewed toward the positive end (low codes = "very good/very happy"), suggesting most respondents feel relatively well. `HighestEducation` is concentrated at the upper codes, indicating most participants completed at least secondary school. `BelieveinGod` is a binary variable with more respondents saying "no" (0) than "yes" (1). `SocialClass` clusters around the middle codes (lower-middle and working class). `MaritalStatus` is dominated by code 1 (married) and code 6 (single), with much smaller frequencies for other categories.
+From the summary table and the plot, we can see that:
 
-**Survey participation bias:** Volunteers who complete long surveys tend to be more educated, more engaged with civic life, and more likely to be from higher socioeconomic groups than the general population. This means lower-income, less-educated, and older respondents are likely under-represented. Findings from this sample should not be treated as fully representative of New Zealand society.
+(1) Age is roughly symmetric and widely spread (18–90), centred on middle age (median ≈ 51).
 
-**Three variables with the most missing values:** Based on the `missing_counts` table, the three variables with the most missing values are `IncomeDecile`, `MaritalStatus`, and `SocialClass`. `IncomeDecile` may be missing because many people consider their personal income sensitive and are reluctant to disclose it. `MaritalStatus` can be left blank by respondents who feel their situation is complicated or do not identify with any of the fixed categories. `SocialClass` involves self-identification with a socioeconomic group, which some respondents may find presumptuous, unclear, or politically uncomfortable to answer.
+(2) Female, BelieveinGod and MaritalStatus are highly unbalanced,sl ightly more females, ~70% believe in God, and "married" dominates marital status.
 
----
+(3) StateofHealth and FeelingofHappiness are right-skewed (most responses at the "good" end), while LifeSatisfaction is left-skewed (concentrated at 7–10), all three lean toward positive outcomes.
 
-## 3.2 Normalised dataset [3 marks]
+(4) HighestEducation, IncomeDecile and SocialClass cluster in the middle-to-high categories, with income the most evenly spread across deciles.
 
-```{r 3_2_normalised}
-# 定义本练习使用的10个变量名，与任务要求一致
+###### 2. A brief comment on how survey participation may bias the sample. 
+```{r}
+# Age covers a much bigger range than the other variables, so I gave it its own histogram to see the distribution more clearly.
+wv_survey |>
+  filter(!is.na(Age)) |>
+  ggplot(aes(x = Age)) +
+  geom_histogram(bins = 30, fill = "#C582B2", alpha = 0.3) +
+  labs(title = "Detailed Distribution of Age",
+       x = "Age (years)", y = "Count",
+       caption = "Data: World Values Survey 2014") +
+  theme_minimal()
+ 
+```
+
+
+From the distribution plots, we can see that:
+
+(1) Most respondents are married, have received some education, and fall into the middle-to-upper social classes or are employed. Since these tend to be better-off groups, this probably pushes happiness and life satisfaction toward the higher end.
+
+(2) In contrast, people who are unmarried, less educated, of lower social class, or elderly make up only a small part of the sample, so these groups are under-represented and the sample may be biased.
+
+(3) To get results that better reflect reality, we should first balance the sample on background variables such as gender, age, income, education, and social class, and only then examine outcomes like belief, happiness, and life satisfaction.
+
+###### 3. The three variables with the most missing values, with plausible reasons for this missingness. 
+
+```{r}
+# We could already see the missing values in the skim table from Step 1, but it's a bit hard to read, so here I've plotted them in order to show it more clearly.
+gg_miss_var(wv_survey)
+```
+
+
+Based on the chart:
+
+(1) The three variables with the most missing values are BelieveinGod, SocialClass, and IncomeDecile.
+
+(2) BelieveinGod has the highest missingness. This is probably the most personal question in the entire survey. Whether or not someone believes in God is a deeply private, almost untouchable part of who they are. People tend to get quite guarded about it, so it's not surprising that so many chose not to answer.
+
+(3) SocialClass comes next. This one's tricky because the question itself is kind of judgemental by nature,nobody wants to label themselves "lower class", but claiming "upper class" feels uncomfortable too. And honestly, the boundaries are blurry. Like, how do you classify someone who earns a lot but works crazy hours versus someone who's wealthy but doesn't work at all? It's genuinely hard to answer, so people just don't.
+
+(4) Finally, IncomeDecile. A lot of people probably don't even know what a decile is, which is already a barrier. On top of that, we tend to compare ourselves to the people around us, so if everyone in your circle earns well, you might think you're just "average" when you're actually in a high decile. And of course, money is always a sensitive topic, so people are naturally hesitant to share that kind of information.
+
+#### 3.2 Normalised dataset 
+
+###### Prepare a new version of the dataset using all 10 variables listed above.
+```{r}
+# Step1: Define 10 variables
 survey_vars <- c(
   "Female",
   "Age",
@@ -110,410 +113,424 @@ survey_vars <- c(
   "BelieveinGod",
   "FeelingofHappiness"
 )
+```
 
-# ── 步骤1：提取10个变量并删除含缺失值的行 ────────────────────────────
-# select() 只保留10个目标变量
-# drop_na() 删除任意一列含 NA 的行（完整案例分析）
-wv_complete <- wv_survey |>
+###### Remove rows with missing values in any of the 10 variables, then normalise all 10 variables.
+```{r}
+# Step2:Remove any rows containing missing values (NA)
+wv_data <- wv_survey |>
   select(all_of(survey_vars)) |>
   drop_na()
 
-# 查看完整案例数量
-nrow(wv_complete)
-
-# ── 步骤2：对所有变量做z-score标准化 ────────────────────────────────
-# mutate(across(everything(), ~ as.numeric(scale(.x))))
-#   across(everything()) ：对所有列应用同一函数
-#   scale(.x)            ：对每列计算 z-score，即 (x - 均值) / 标准差
-#   as.numeric(...)      ：将结果从矩阵转为数值向量，防止后续函数报错
-# 结果命名为 wv_scaled，每列均值为0，标准差为1
-wv_scaled <- wv_complete |>
+# Step3:Standardize all columns to z-scores
+wv_scaled <- wv_data |>
+  select(all_of(survey_vars)) |>
   mutate(across(everything(), ~ as.numeric(scale(.x))))
 
-# 验证标准化结果：每列均值应接近0，标准差应接近1
-wv_scaled |>
-  summarise(across(everything(), list(mean = mean, sd = sd)))
+wv_data
+wv_scaled
+
 ```
 
-**Written answer — 3.2:**
+###### Comment on why normalisation is appropriate before cluster analysis for these data.
 
-Normalisation (z-scoring) is appropriate before cluster analysis because the 10 variables are measured on very different scales. `Age` ranges from roughly 18 to 80, while binary variables like `Female` and `BelieveinGod` only take values 0 or 1. Without scaling, variables with larger numerical ranges would dominate the Euclidean distance calculations, causing clusters to be driven almost entirely by a few high-variance variables and ignoring the rest. After z-scoring, every variable contributes on a comparable scale, so clusters reflect the full pattern of survey responses rather than being distorted by units of measurement.
 
----
+(1) The variables in this dataset have very different ranges, Age goes from 18 to 90, LifeSatisfaction and IncomeDecile are on a 1–10 scale, and binary variables like Female and BelieveinGod only take 0 or 1.
 
-## 3.3 Hierarchical clustering dendrogram [4 marks]
+(2) Without standardisation, when calculating distances, especially Euclidean distance. Age will dominate. A variable like BelieveinGod with a range of just 0 to 1 basically gets ignored.
 
-```{r 3_3_dendrogram}
-# ── 步骤1：计算欧氏距离矩阵 ─────────────────────────────────────────
-# dist() 使用默认的欧氏距离（method = "euclidean"）计算观测值两两之间的距离
-# 输入为标准化后的数据 wv_scaled，确保各变量权重相同
+(3) After standardisation, all variables are on the same starting line. The clustering algorithm can then pick up on similarities across all variables equally, giving us results that are actually meaningful and unbiased.
+
+
+#### 3.3 Hierarchical clustering dendrogram 
+
+###### Using the complete-case, normalised 10-variable dataset from Section 3.2, produce a dendrogram of the sample.
+
+###### Use Euclidean distance and complete linkage.
+```{r}
+# Step 1: Compute Euclidean distance
 wv_dist <- dist(wv_scaled, method = "euclidean")
 
-# ── 步骤2：用完全连接法进行层次聚类 ─────────────────────────────────
-# hclust() 执行层次聚类
-# method = "complete" 表示完全连接（两簇之间距离定义为最远两点的距离）
-# 完全连接倾向于产生更紧凑、更均衡的簇，而非单连接的"链式"结构
+# Step 2: Hierarchical clustering with complete linkage
 wv_hc <- hclust(wv_dist, method = "complete")
 
-# ── 步骤3：绘制树状图（dendrogram） ─────────────────────────────────
-# plot() 将层次聚类结果可视化为树状图
-# labels = FALSE ：样本量大时不显示个别标签，防止图形过于拥挤
-# hang = -1      ：让所有叶节点底部对齐，便于比较分支高度
-# main           ：图标题，说明方法与数据
+# Step 3: Plot dendrogram
 plot(
   wv_hc,
   labels = FALSE,
   hang = -1,
-  main = "Complete-linkage dendrogram: NZ World Values Survey (Euclidean distance)"
+  main = "Complete-linkage dendrogram for WV Survey 2014"
 )
 ```
 
-**Written answer — 3.3:**
+###### What do you think is the best number of clusters to divide the sample into? Briefly justify your answer.
 
-The dendrogram shows that the data splits at a relatively high height into two broad groups, with further subdivision visible at lower heights. Based on the structure of the tree, **4 clusters** appears to be a reasonable choice. The tree has two major branches, each of which splits again at a moderately high fusion height, suggesting four natural groupings before the branches become very fine. Cutting at 4 clusters captures the main visible structure without over-partitioning.
+```{r}
+# Use the silhouette measure to choose k
+fviz_nbclust(
+  wv_scaled,
+  FUNcluster = factoextra::hcut,
+  hc_method = "complete",
+  k.max = 10,
+  method = "silhouette"
+)
+```
 
----
 
-## 3.4 k-means clustering [6 marks]
+(1) From the dendrogram, we could argue for 2, 3, 4, or even 5 clusters, there's no clear single answer just from looking at it.
 
-```{r 3_4_kmeans}
-# ── 步骤1：绘制肘部图（elbow plot） ──────────────────────────────────
-# 对 K = 1 到 10 分别拟合 K-means，记录每个K下的组内平方和（tot_withinss）
-# 先创建一个空的 tibble，用于存储结果
-set.seed(161324)   # 设置随机种子保证可复现，与 lab 10 同一数据集风格一致
+(2) So we use the silhouette method to make a more informed decision.
+
+(3) From the plot, k = 2 is the best choice, the average silhouette width peaks here, meaning the clustering is at its clearest. As k increases to 3, 4, 5, the silhouette width just keeps dropping.
+
+#### 3.4 k-means clustering 
+
+###### Perform a k-means cluster analysis of the same complete-case, normalised 10-variable dataset, based on Euclidean distances.
+
+###### Choose an appropriate value of `k` from `1, 2, ..., 10`, and explain why you chose it. Include graphs of total within-cluster sum of squares, average silhouette width, and silhouettes for your chosen solution.
+```{r}
+# Step 1: Elbow plot
+set.seed(123)
 
 wv_elbow <- tibble(
-  k = 1:10,                    # K 取值范围
-  tot_withinss = NA_real_      # 用于存放每个K对应的总组内平方和，初始为NA
+  k = 1:10,
+  tot_withinss = NA_real_
 )
 
-# 用 for 循环依次拟合不同K值的 K-means 模型
 for (i in 1:nrow(wv_elbow)) {
-  k_value <- wv_elbow$k[i]    # 取出当前行的K值
-  # kmeans() 拟合K均值聚类
-  #   centers = k_value ：指定簇数
-  #   nstart = 20        ：从20个随机起点运行，取最优解，减少局部最优的影响
+  k_value <- wv_elbow$k[i]
+# Run K-means: Split into K clusters, try 20 times to get the best fit
   km_fit <- kmeans(wv_scaled, centers = k_value, nstart = 20)
-  # 将当前K对应的总组内平方和写回 tibble
+# Save result: Store the distance error (the smaller, the better)
   wv_elbow$tot_withinss[i] <- km_fit$tot.withinss
 }
 
-# 打印肘部数据表
-wv_elbow
-
-# 绘制肘部图
-# geom_line() + geom_point() ：折线图，x轴为K，y轴为总组内平方和
-# 寻找曲线"弯折"处，即增加K带来的改善显著减少的位置
+wv_elbow 
+```
+```{r}
+# Step 1: Elbow plot
 wv_elbow_plot <- ggplot(wv_elbow) +
-  aes(x = k, y = tot_withinss, group = 1) +
+  aes(x = k, y = tot_withinss) +
   geom_line() +
   geom_point() +
-  labs(
-    x = "Number of clusters (k)",
-    y = "Total within-cluster sum of squares",
-    title = "Elbow plot for K-means clustering (WV Survey)"
-  )
+  labs(x = "Number of clusters", y = "Total within-cluster sum of squares")
 
-wv_elbow_plot
+ggplotly(wv_elbow_plot, tooltip = "text")
+```
 
-# ── 步骤2：平均轮廓宽度图 ────────────────────────────────────────────
-# fviz_nbclust() 自动对 K = 1 到 k.max 拟合 K-means 并计算平均轮廓宽度
-# 轮廓宽度衡量每个观测值与自己所在簇的紧密程度相对于相邻簇的分离程度
-# 轮廓宽度最大对应最优K值
-set.seed(161324)
+
+The elbow plot is a bit hard to read here, there's no really obvious elbow point.
+
+Looking at the curve, the biggest drop is from k=1 to k=2, then k=2 to k=3 still drops a fair bit, and after k=3 it starts to flatten out gradually.
+
+So honestly, we could argue for either k=2 or k=3 just from this plot alone, neither is super clear cut. That's why we need the silhouette plot to help make a more confident decision.
+
+```{r}
+# Step 2: Silhouette width across k values for k-means
+set.seed(123)
 
 fviz_nbclust(
-  wv_scaled,             # 输入标准化数据
-  FUNcluster = kmeans,   # 使用 K-means 作为聚类函数
-  method = "silhouette", # 评估指标为平均轮廓宽度
-  k.max = 10,            # 最大测试K值
-  nstart = 20            # 同上，每次随机起点数
-)
-
-# ── 步骤3：拟合最终 K-means 模型（K = 4） ───────────────────────────
-# 综合肘部图和轮廓宽度图，选择 K = 4
-# nstart = 25 ：使用更多随机起点确保稳定性
-set.seed(161324)
-wv_km4 <- kmeans(wv_scaled, centers = 4, nstart = 25)
-
-# 打印聚类结果摘要（各簇大小、组内平方和等）
-wv_km4
-
-# ── 步骤4：绘制所选K = 4 的轮廓图 ────────────────────────────────────
-# silhouette() 计算每个观测值的轮廓宽度
-#   第一个参数：聚类标签向量（来自 K-means 结果）
-#   第二个参数：距离矩阵（与层次聚类中使用同一个）
-wv_sil <- silhouette(wv_km4$cluster, wv_dist)
-
-# fviz_silhouette() 将轮廓宽度可视化，每根柱代表一个观测值
-# 柱越高，该观测值越"适合"自己所在的簇；负值表示可能被误分
-fviz_silhouette(wv_sil)
-```
-
-**Written answer — 3.4:**
-
-The elbow plot shows a noticeable reduction in the rate of decrease around K = 3 to K = 4, after which the curve flattens considerably. The average silhouette width plot confirms that K = 4 gives one of the higher silhouette values in the range tested, indicating reasonably well-separated clusters. K = 4 was therefore chosen as a defensible balance between capturing meaningful structure and avoiding over-segmentation. The silhouette plot for K = 4 shows most observations have positive widths, though the overall average silhouette width is modest, reflecting the overlapping nature of survey data.
-
----
-
-## 3.5 Visualisation of hierarchical clustering [3 marks]
-
-```{r 3_5_fviz_cluster}
-# ── 切割层次聚类树为4簇 ──────────────────────────────────────────────
-# cutree() 在指定高度或指定簇数处切割树状图
-# k = 4 ：切出4个簇，与题目要求一致（无论3.3中的最优K为何）
-wv_hc_groups <- cutree(wv_hc, k = 4)
-
-# ── fviz_cluster() 可视化聚类结果 ───────────────────────────────────
-# fviz_cluster() 来自 factoextra 包
-#   list(data = ..., cluster = ...) ：指定原始数据和聚类标签
-#   geom = "point"  ：只绘制散点（不显示文本标签，样本量大时更整洁）
-#   ellipse.type = "convex" ：为每个簇绘制凸包轮廓，直观展示簇的范围
-# 函数内部自动对数据做PCA降到2维进行可视化
-fviz_cluster(
-  list(data = wv_scaled, cluster = wv_hc_groups),
-  geom = "point",
-  ellipse.type = "convex",
-  main = "4-cluster complete-linkage hierarchical clustering (WV Survey)"
+  wv_scaled,
+  FUNcluster = kmeans,
+  method = "silhouette",
+  k.max = 10,
+  nstart = 20
 )
 ```
 
-**Written answer — 3.5:**
 
-The `fviz_cluster` graph shows four clusters projected onto the first two principal components. The clusters show partial but limited separation: clusters 1 and 3 are reasonably distinct, while clusters 2 and 4 overlap considerably in the centre of the PCA space. This limited separation is expected given that survey data often reflects gradual attitudinal differences rather than sharp discontinuities. The first two principal components capture only a portion of the total variance in 10 variables, so overlap in 2D does not necessarily mean the clusters are meaningless — differences may exist in dimensions not shown here.
+From the silhouette plot, the dashed line points to k=3, meaning k=3 has a slightly higher average silhouette width than k=2. So we'll go with k=3 here.
 
----
 
-## 3.6 Interpretation of k-means clusters [6 marks]
+```{r}
+set.seed(123)
+wv_km3 <- kmeans(wv_scaled, centers = 3, nstart = 25)
 
-```{r 3_6_cluster_interpretation}
-# ── 步骤1：将K = 4 的K-means聚类标签附加到完整案例数据上 ─────────────
-# mutate() 新增一列 Cluster，值为 K-means 模型输出的簇编号
-# factor() 将整数型簇编号转为因子，确保 ggplot2 使用离散颜色
-wv_km_clustered <- wv_complete |>
-  mutate(Cluster = factor(wv_km4$cluster))
+# Step 3: Silhouette plot for the chosen k = 3 solution
+#From help usage:silhouette ## Default S3 method:silhouette(x, dist, dmatrix, ...)
+plot(silhouette(wv_km3$cluster, dist(wv_scaled)), 
+     border = NA, do.clus.stat = FALSE, do.n.k = FALSE)
+```
 
-# ── 步骤2：计算每个簇在各变量上的均值 ───────────────────────────────
-# group_by(Cluster) ：按簇分组
-# summarise(across(all_of(survey_vars), mean)) ：对每个变量求组内均值
-# n = n() ：记录每个簇的样本量
-# arrange(desc(n)) ：按样本量从大到小排列，先展示最大的簇
+
+From the plot:
+
+(1) Cluster 1 is mostly positive with only a tiny few close to zero, generally looks fine.
+
+(2) Cluster 2 has a small number of negative values, meaning some observations in this group probably fit better elsewhere.
+
+(3) Cluster 3 is the strongest, all positive, and the widest.
+
+Overall, the clustering looks pretty reasonable.
+
+
+```{r}
+set.seed(123)
+# Fit a final model with K = 3 and describe clusters using their means
+wv_km3 <- kmeans(wv_scaled, centers = 3, nstart = 25)
+
+wv_km_clustered <- wv_data |>
+  mutate(Cluster = factor(wv_km3$cluster))
+
 wv_km_means <- wv_km_clustered |>
   group_by(Cluster) |>
-  summarise(
-    across(all_of(survey_vars), mean),
-    n = n()
-  ) |>
+  summarise(across(all_of(survey_vars), mean), n = n()) |>
   arrange(desc(n))
 
-# 打印各簇均值表，用于解读各簇的特征
 wv_km_means
-
-# ── 步骤3：箱线图展示各簇内变量分布 ─────────────────────────────────
-# pivot_longer() 将宽格式转为长格式，方便 facet_wrap 分面绘图
-# 每行变为：Cluster + 变量名(Variable) + 变量值(Value)
-wv_km_long <- wv_km_clustered |>
-  pivot_longer(
-    cols = all_of(survey_vars),  # 将10个变量列堆叠
-    names_to = "Variable",       # 原列名 → Variable 列
-    values_to = "Value"          # 原数值 → Value 列
-  )
-
-# 用 ggplot2 绘制箱线图
-# x = Cluster, y = Value ：比较不同簇在同一变量上的分布
-# fill = Cluster          ：用颜色区分不同簇
-# facet_wrap(~ Variable)  ：每个变量单独一格，scales = "free_y" 允许y轴各自缩放
-ggplot(wv_km_long, aes(x = Cluster, y = Value, fill = Cluster)) +
-  geom_boxplot(alpha = 0.7) +
-  facet_wrap(~ Variable, scales = "free_y") +
-  labs(
-    x = "Cluster",
-    y = "Original variable value",
-    title = "K-means cluster profiles (K = 4): NZ World Values Survey"
-  ) +
-  theme(legend.position = "none")  # 颜色已由x轴标签表示，隐藏图例避免重复
 ```
 
-**Written answer — 3.6:**
 
-Using the cluster means table and the boxplots to characterise each of the four clusters:
+(1) Cluster 3 (n = 209): Middle-aged (45), best health (1.34), highest education (4.28), highest income (7.90), highest life satisfaction (8.44) and happiness (1.44), the best-off group overall.
 
-**Cluster 1 — Younger, less religious, higher-educated respondents:** This cluster tends to have lower `Age`, lower `BelieveinGod` scores (less religious), and higher `HighestEducation`. Life satisfaction and income are moderate. These respondents likely represent younger, secular, educated New Zealanders.
+(2) Cluster 2 (n = 157): Youngest (39), but worse health (2.31), middle income (5.25), lowest life satisfaction (6.08) and happiness (2.13), interesting that the youngest group is actually doing the worst across some measures.
 
-**Cluster 2 — Older, lower-income, working-class respondents:** This cluster shows higher `Age`, lower `IncomeDecile`, and higher `SocialClass` codes (i.e., lower social class self-identification). Health and happiness ratings are less favourable. These respondents are likely older, lower-income individuals with less positive wellbeing assessments.
+(3) Cluster 1 (n = 150): Oldest (65), lowest income (3.87), lowest education (2.47), yet life satisfaction is still quite high (8.41), close to Cluster 3 ,suggesting that low income doesn't necessarily mean low life satisfaction.
 
-**Cluster 3 — Middle-aged, religiously inclined, married respondents:** This cluster has higher `BelieveinGod`, lower `MaritalStatus` codes (i.e., more likely married), and moderate age. Income and life satisfaction are around average. These respondents likely represent a traditional, moderately religious, middle-aged demographic.
 
-**Cluster 4 — Higher-income, highly satisfied, well-educated respondents:** This cluster has the highest `LifeSatisfaction`, highest `IncomeDecile`, best `StateofHealth` (lowest code = very good), and highest `HighestEducation`. These are the most advantaged respondents in terms of socioeconomic position and subjective wellbeing.
+#### 3.5 Visualisation of hierarchical clustering
 
----
+###### Regardless of your answer in Section 3.3, show a `fviz_cluster` graph based on 4 clusters from complete-linkage hierarchical clustering using the complete-case, normalised 10-variable dataset.
 
-# Exercise 4: Association rules for flag colours [18 marks]
+```{r}
+# Cut tree into 4 clusters
+wv_hc_groups <- cutree(wv_hc, k = 4)
+# The code follows the same logic as the usage (fviz_cluster) in the help documentation, and I double-checked the Arguments section for how object is defined.
+fviz_cluster(
+  object = list(data = wv_scaled, cluster = wv_hc_groups),
+  data = NULL,
+  geom = "point",
+  ellipse = TRUE,
+  ellipse.type = "convex",
+  pointsize = 1.5,
+  labelsize = 12,
+  main = "Hierarchical clustering: 4 clusters"
+)
+```
 
----
+###### Does the graph show sufficient separation between the clusters? Explain.
 
-## 4.1 Frequency of colour use [3 marks]
 
-```{r 4_1_item_frequency}
-# ── 绘制项目频率图 ────────────────────────────────────────────────────
-# itemFrequencyPlot() 来自 arules 包
-#   topN = 20       ：只显示出现频率最高的20种颜色
-#   type = "relative"：使用相对频率（比例），即出现该颜色的国家数 / 总国家数
-itemFrequencyPlot(flags, topN = 20, type = "relative")
+No, the separation is not sufficient.
 
-# ── 用 ggplot2 重绘项目频率图 ────────────────────────────────────────
-# itemFrequency() 返回每个项目（颜色）的相对频率（命名数值向量）
-# enframe() 将命名向量转为两列 tibble（name = 颜色名, value = 频率）
-# arrange(desc(support)) 按频率从高到低排序
-# slice_head(n = 20) 只保留前20种颜色
-flags_freq <- flags |>
+(1) Cluster 1 and Cluster 2 overlap heavily with each other.
+
+(2) Cluster 3 and Cluster 4 also overlap quite a bit.
+
+(3) Cluster 3 and 4 do sit slightly further right on Dim1, so there's a little bit of separation from Cluster 1, but overall all four clusters are pretty much mixed together.
+
+
+#### 3.6 Interpretation of k-means clusters 
+
+###### Assume 4 clusters and use k-means on the complete-case, normalised 10-variable dataset.
+```{r}
+# Step 1: Fit k-means with k=4
+set.seed(123)
+wv_km4 <- kmeans(wv_scaled, centers = 4, nstart = 25)
+
+wv_km4_clustered <- wv_data |>
+  mutate(Cluster = factor(wv_km4$cluster))
+```
+
+###### Explore the differences among the clusters using boxplots or suitable summary tables. For each cluster, write one or two sentences characterising the cluster in terms of the original variables.
+```{r}
+# Step 2: boxplot
+wv_km4_clustered |>
+  pivot_longer(
+    -Cluster,
+    names_to = "Variable",
+    values_to = "Value"
+  ) |>
+  ggplot(aes(x = Cluster, y = Value, colour = Cluster)) +
+  geom_boxplot() +
+  facet_wrap(vars(Variable), scales = "free_y") +
+  labs(
+    x = NULL,
+    y = "Value",
+    title = "WV Survey profile by cluster"
+  )
+```
+
+
+(1) Cluster 1 (red): Middle-aged (around 45), high education and income, all believe in God, high life satisfaction and good health, basically the high-education, high-income, religious group.
+
+(2) Cluster 2 (green): Youngest (around 40), but worst health, middle income, and clearly the lowest life satisfaction (median around 5) and happiness, the youngest group but doing the worst across most measures.
+
+(3) Cluster 3 (blue): Also middle-aged (around 45), high education and income, but no belief in God at all, pretty much identical to Cluster 1 except for religion.
+
+(4) Cluster 4 (purple): Oldest (around 65), lowest education and income, yet life satisfaction is still quite high  older, lower income people who are actually pretty content with life.
+
+
+```{r}
+# Step 3: Cluster means table
+wv_km4_means <- wv_km4_clustered |>
+  group_by(Cluster) |>
+  summarise(across(all_of(survey_vars), mean), n = n()) |>
+  arrange(desc(n))
+
+wv_km4_means
+```
+
+
+Based on the cluster means table above, we can see that:
+
+(1) Cluster 1 (n = 154): Middle-aged (46), best health (1.41), highest education (4.31), highest income (7.58), all believe in God (1.00), high life satisfaction (8.22) and strongest happiness (1.48), the high-education, high-income, religiously devout group.
+
+(2) Cluster 4 (n = 129): Oldest (65), lowest education (2.34), lowest income (3.84), yet life satisfaction is still quite high (8.40), same pattern as before, older low-income people are actually pretty content.
+
+(3) Cluster 3 (n = 122): Middle-aged (46), fairly high education (4.04) and income (7.11), but no belief in God at all (0.00), very similar to Cluster 1 actually, the only real difference is religion.
+
+(4) Cluster 2 (n = 111): Youngest (40), worst health (2.46), middle income (4.75), lowest life satisfaction (5.43) and happiness (2.21), the youngest group but doing the worst across most measures.
+
+The boxplot and the cluster means table tell the same story, the four clusters show clear and consistent differences across the key variables.
+
+
+### Exercise 4: Association rules for flag colours 
+
+#### 4.1 Frequency of colour use 
+
+###### Make a plot showing how frequently the various colours have been used.
+
+###### What are the top three most commonly used colours?
+
+```{r}
+# Step1：Item frequencies
+itemFrequencyPlot(flags, topN = 25, type = "relative")
+```
+```{r}
+# Step 2: Item frequencies of flag colours
+flag_freq <- flags |>
   itemFrequency() |>
   enframe(name = "colour", value = "support") |>
   arrange(desc(support)) |>
-  slice_head(n = 20)
+  slice_head(n = 10)
 
-# 打印频率表，方便读取具体数值
-flags_freq
-
-# ggplot2 版本横向条形图
-# fct_reorder(colour, support) ：按频率大小对颜色名称排序，使条形从短到长排列
-ggplot(flags_freq, aes(x = support, y = fct_reorder(colour, support))) +
-  geom_col(fill = "steelblue") +
-  labs(
-    x = "Relative frequency (proportion of flags)",
-    y = NULL,
-    title = "Top 20 flag colours by frequency"
-  )
+ggplot(flag_freq, aes(x = support, y = fct_reorder(colour, support))) +
+  geom_col(fill="purple",alpha=0.3) +
+  labs(x = "Support", y = NULL)
 ```
 
-**Written answer — 4.1:**
 
-Based on the item frequency plot and table, the three most commonly used flag colours are:
+From the two plots above, we can conclude that:
 
-1. **Red** — appears in the largest proportion of flags globally.
-2. **White** — the second most frequent colour.
-3. **Blue** — the third most frequent colour.
+(1) Red is the most frequently used colour, which likely reflects histories of armed struggle and revolution;
 
-These three colours dominate flag design, reflecting common political and historical symbolism (e.g., red for revolution or courage, white for peace, blue for sky or sea).
+(2) White is the second most commonly used colour, serving as a classic symbol of peace and purity;
 
----
+(3) Blue ranks third, evoking themes of freedom and open skies.
 
-## 4.2 Number of rules [3 marks]
 
-```{r 4_2_number_of_rules}
-# ── 用 apriori() 挖掘关联规则 ─────────────────────────────────────────
-# apriori() 来自 arules 包，基于 Apriori 算法挖掘频繁项集和关联规则
-# parameter 参数说明：
-#   support = 6 / length(flags)
-#     ：要求至少6个国家使用同一颜色组合（将绝对计数转换为相对支持度）
-#     ：length(flags) 返回交易总数（国家数量）
-#   confidence = 0.5
-#     ：要求条件概率至少为50%，即满足前提条件的国家中至少50%也满足结论
-#   minlen = 1  ：规则至少包含1个项目（允许空前提 → 单项目规则）
-#   maxlen = 4  ：规则最多包含4个项目（控制规则复杂度）
-# control = list(verbose = FALSE) ：关闭挖掘过程的详细输出
-flags_rules <- apriori(
+#### 4.2 Number of rules 
+
+###### Consider only rules where at least 6 countries have used the same colour combination. Use a confidence cutoff of `confidence = 0.5`.
+
+###### How many rules are found?
+
+```{r}
+# Mining rules with Apriori
+flag_rules <- apriori(
   flags,
-  parameter = list(
-    support    = 6 / length(flags),  # 至少6个国家
-    confidence = 0.5,                 # 置信度至少50%
-    minlen     = 1,
-    maxlen     = 4
-  ),
+  parameter = list(support = 6/length(flags), confidence = 0.5, minlen = 1, maxlen = 4),
   control = list(verbose = FALSE)
 )
 
-# 打印规则对象的简要信息（规则总数、数据集大小等）
-flags_rules
-
-# 用 length() 明确输出规则总数
-length(flags_rules)
+flag_rules
+length(flag_rules)
 ```
 
-**Written answer — 4.2:**
 
-With a minimum support corresponding to at least 6 countries and a confidence threshold of 0.5, the total number of rules found is **`r length(flags_rules)`**. This includes rules of varying lengths (1 to 4 items).
+Under the two conditions, at least 6 countries sharing the same colour combination and a confidence of at least 0.5.
 
----
+the algorithm picked up 64 meaningful colour pairing patterns from the flag dataset.
 
-## 4.3 Highest support rules [6 marks]
 
-```{r 4_3_highest_support}
-# ── 找出支持度最高的5条规则 ──────────────────────────────────────────
-# sort(by = "support") ：按支持度从高到低排序
-#   支持度 = 包含该颜色组合的国家数 / 总国家数
-# head(n = 5) ：只保留前5条规则
-# inspect()   ：以可读格式打印规则，显示 lhs（前提）、rhs（结论）及三个指标
-flags_rules |>
+#### 4.3 Highest support rules 
+
+###### Find the 5 rules with the highest support.
+```{r}
+flag_rules |>
   sort(by = "support") |>
   head(n = 5) |>
   inspect()
 ```
 
-**Written answer — 4.3:**
+###### Take the third rule in this list and explain:
 
-The five rules with the highest support are listed above. Taking the **third rule** in the list:
+###### 1. what the rule itself means, that is, what `itemset => itemset` represents
+###### 2. the support value
+###### 3. the confidence value
+###### 4. the lift value
 
-1. **What the rule means:** The rule takes the form `{colour(s)} => {colour}`. The left-hand side (LHS) is the set of colours already present on the flag (the antecedent), and the right-hand side (RHS) is an additional colour that also tends to appear (the consequent). In practical terms, it means: "Among all flags in the dataset, flags containing the LHS colour(s) very frequently also contain the RHS colour."
 
-2. **Support:** The support value gives the proportion of all flags in the dataset that contain *both* the LHS and RHS colours together. A support of, for example, 0.50 means that 50% of all flags in the dataset contain this combination of colours.
+The third rule can be explained as follows:
 
-3. **Confidence:** The confidence value gives the conditional probability — among all flags that contain the LHS colour(s), what fraction also contains the RHS colour. A confidence of 0.80 means 80% of flags with the LHS colour also have the RHS colour.
+(1) {White} => {Red} means that flags which use white also tend to use red.
 
-4. **Lift:** The lift value compares the confidence of the rule to the baseline frequency of the RHS colour in all flags. A lift greater than 1 means the LHS colours increase the likelihood of the RHS colour appearing beyond its base rate. Lift = 1 indicates no association beyond chance; lift > 1 indicates a positive association.
+(2) A support of 0.56 tells us that around 56% of all flags in the dataset contain both white and red at the same time.
 
----
+(3) A confidence of 0.78 means that among all flags that use white, 78% of them also use red.
 
-## 4.4 Lift greater than 2 [3 marks]
+(4) A lift of 1.004, while technically above 1, is so close to 1 that white and red are essentially independent of each other statistically, knowing a flag has white tells you almost nothing extra about whether it also has red.
 
-```{r 4_4_high_lift}
-# ── 筛选 lift > 2 的规则 ─────────────────────────────────────────────
-# subset() 来自 arules 包，用于按条件过滤规则集合
-# lift > 2 ：只保留提升度大于2的规则
-# 提升度 > 2 表示该颜色组合在旗帜中同时出现的频率
-# 是两种颜色独立出现频率乘积的2倍以上，说明存在强正向关联
-high_lift_rules <- flags_rules |>
-  subset(lift > 2)
 
-# 打印筛选结果数量
-length(high_lift_rules)
+#### 4.4 Lift greater than 2 
 
-# 按提升度从高到低排序并打印所有高提升度规则
-high_lift_rules |>
-  sort(by = "lift") |>
+###### Find the rules for which lift is greater than 2.
+
+###### How many are there? Explain what these rules tell you.
+
+```{r}
+# Find rules with lift greater than 2
+lift_rules <- flag_rules |>
+  subset(lift > 2) |>
+  sort(by = "lift")|>
   inspect()
+
 ```
 
-**Written answer — 4.4:**
 
-There are **`r length(high_lift_rules)`** rules with lift greater than 2. Rules with lift > 2 represent colour combinations that appear together on flags far more often than would be expected if colour choices were independent. These are the most informative associations in the dataset — they tell us which colour pairings are genuinely characteristic of flag design rather than simply being common. For example, if Orange and Green appear together with high lift, it suggests those colours have a culturally or historically linked usage pattern (e.g., associated with specific regional or religious flag traditions) rather than both being popular coincidentally.
+There is only 1 rule with a lift greater than 2:
 
----
+(1) {Red, White, Yellow} => {Black} means that flags which use red, white, and yellow also tend to use black.
 
-## 4.5 Applied flag recommendation [4 marks]
+(2) A support of 0.057 tells us that around 5.7% of all flags in the dataset contain red, white, yellow, and black at the same time.
 
-```{r 4_5_green_rules}
-# ── 筛选以 Green 为前提（LHS）且结论（RHS）为单一颜色的规则 ──────────
-# lhs %in% "Green" ：LHS 精确匹配 "Green"（使用 %in% 运算符，只包含Green的规则）
-# rhs 自然只含单一颜色（因为我们用 maxlen = 4，且 lhs %in% 只匹配单项集）
-# 再加 lift > 1 过滤掉无信息关联（lift ≤ 1 意味着Green的存在没有增加该颜色的出现概率）
-green_rules <- flags_rules |>
-  subset(lhs %in% "Green" & lift > 1)
+(3) A confidence of 0.55 means that among all flags that use red, white, and yellow, 55% of them also use black.
 
-# 按提升度从高到低排序并打印，帮助识别与绿色最强关联的颜色
+(4) A lift of 2.57, which is well above 1, tells us that red, white, yellow, and black genuinely tend to appear together, flags that already use red, white, and yellow are about 2.57 times more likely to also include black than we would expect by chance.
+
+
+#### 4.5 Applied flag recommendation 
+
+###### Suppose a new island country declares independence. The leaders have decided that the flag must include green as a prominent colour.
+
+###### Use the association rules to recommend one additional colour for the flag.
+
+###### To keep the recommendation simple, consider rules with `Green` on the left-hand side and a single colour on the right-hand side. Which additional colour would you recommend, and why?
+
+###### Your answer should refer to support, confidence, lift, and the colour frequencies where appropriate.
+
+```{r}
+# Find rules with Green on the left-hand side
+green_rules <- flag_rules |>
+  subset(lhs %in% "Green" & lift > 1.1)
+
 green_rules |>
   sort(by = "lift") |>
   inspect()
 ```
 
-**Written answer — 4.5:**
 
-The rules with `Green` on the left-hand side are shown above. To make the recommendation, we consider support, confidence, and lift together:
+Based on the association rules, we recommend adding Yellow to the flag.Based on the association rules, we recommend adding Yellow to the flag.
 
-Based on the rules, the recommended additional colour is the one appearing on the RHS of the highest-lift rule with `Green` as the sole LHS item and a single colour on the RHS.
+(1) Support: Around 6.1% of all flags use both green and yellow together, 13 countries enough to make this a credible recommendation.
 
-- **Support** tells us how many flags in the world already use both Green and this colour — a higher support means the combination is historically common and recognisable.
-- **Confidence** tells us that among flags with Green, a high proportion also include this colour — so it is a strong conditional association, not a coincidence.
-- **Lift > 1** confirms that the presence of Green genuinely increases the likelihood of this colour appearing, beyond its overall base frequency.
+(2) Confidence: 56.5% of flags with green also use yellow.
 
-The recommended colour is the one with the highest **lift** among the Green rules, as it represents the most distinctive and non-trivial association with Green in flag design. Lift is preferred over confidence alone because a colour like Red or White might have high confidence simply because they appear on the majority of all flags (making the rule uninformative), while a high-lift colour genuinely co-occurs with Green more than expected. This recommendation reflects genuine co-occurrence patterns rather than overall colour popularity.
+(3) Lift: At 1.664, this is the second highest lift among all green-related rules, meaning green and yellow genuinely tend to go together rather than just by chance.
+
+(4) Colour frequencies: Red appears frequently across many rules with high confidence, but red is already the most common colour that high confidence is just reflecting red's popularity, not a real strong link with green. Yellow is less common, so its lift is more trustworthy.
+
+Although rule [1] has a higher lift of 1.767, it was not used here because its left-hand side already contains too many colours including red, which is itself a very common colour, making it a less clean basis for recommendation. Rule [2] keeps things simpler and more straightforward.
+
+
