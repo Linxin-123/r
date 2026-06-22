@@ -1,9 +1,3 @@
----
-title: "161.777 Practical Data Mining"
-subtitle: "Assignment 1, 2026"
-author: "LinXin GUO"
-output: html_document
----
 
 ```{r setup, echo=TRUE, warning=FALSE, message=FALSE}
 # Add any other packages you need to load here.
