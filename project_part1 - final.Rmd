@@ -1,0 +1,814 @@
+---
+title: "161.777 Practical Data Mining"
+author: "Linxin Guo"
+subtitle: Project part 1, 2026
+output:
+  html_document: default
+  pdf_document: default
+editor_options: 
+  markdown: 
+    wrap: 72
+---
+
+```{r setup, echo=TRUE, warning=FALSE, message=FALSE}
+# Add any other packages you need to load here.
+library(tidyverse)      # data wrangling and ggplot2
+library(rsample)        # initial_split, training, testing 
+library(yardstick)      # rmse, mae, accuracy, conf_mat 
+library(broom)          # tidy, glance, augment
+library(rpart)          # regression trees, printcp, plotcp 
+library(randomForest)   # random forest, importance
+library(nnet)           # neural network, multinom
+library(discrim)        # LDA, KDA
+library(GGally)
+# Read in the data
+property.train <- read_csv("https://www.massey.ac.nz/~jcmarsha/161777/assessment/data/property_train_val.csv")
+property.test <- read_csv("https://www.massey.ac.nz/~jcmarsha/161777/assessment/data/property_test.csv")
+wheat.train <- read_csv("https://www.massey.ac.nz/~jcmarsha/161777/assessment/data/wheat_train_val.csv") |>
+  mutate(variety = factor(variety))
+wheat.test <- read_csv("https://www.massey.ac.nz/~jcmarsha/161777/assessment/data/wheat_test.csv")
+```
+
+Replace `YOUR NAME HERE` in the author field before knitting. Save your
+final HTML report as `report_studentid.html`.
+
+## Exercise 1: Property Value Prediction
+
+### Step 1 — Exploratory Data Analysis
+
+```{r}
+# 1a. Check for missing values
+# confirms 100% present, no missingness
+naniar::vis_miss(property.train)     
+
+# 1b. Summary statistics for all variables
+# 310 observations, 6 predictors and 1 target
+# The maximum value of transit_distance is 6488, while the median value is only 492, indicating a large disparity; 
+skimr::skim(property.train)         
+
+# 1c. Faceted scatterplots: price_per_unit vs every predictor
+# In almost all of the plots, there is a  price_per_unit outlier(117.5). 
+# Latitude and longitude -spatial clustering patterns. nearby_stores-positive , property_age-negative
+# a log transformation will be applied to transit_distance to examine whether a clearer relationship pattern can be observed.
+property.train |>
+  pivot_longer(-c(price_per_unit),
+               names_to  = "name",
+               values_to = "value") |>
+  ggplot() +
+  geom_point(mapping=aes(x = value, y = price_per_unit), alpha = 0.5) +
+  facet_wrap(vars(name), scales = "free_x") +    
+  labs(x = NULL, y = "price_per_unit",
+       title = "price_per_unit vs each predictor (original scale)")
+
+
+# 1d. Transit_distance: original vs log scale
+# Result: log scale gives a more linear relationship — log transform appropriate
+ggplot(property.train) +
+  geom_point(mapping=aes(x = transit_distance, y = price_per_unit),
+             col = "purple", alpha = 0.5) +
+  labs(title = "Original Scale")
+
+ggplot(property.train) +
+  geom_point(mapping=aes(x = transit_distance + 1, y = price_per_unit),
+             col = "blue", alpha = 0.5) +
+  scale_x_log10() +
+  labs(title = "Log Scale (transit_distance + 1)")
+
+```
+
+### Step 2 — Data processing
+
+```{r}
+# train data split(analysis and validation)
+# We use 75% (≈232 rows) for fitting and 25% (≈78 rows) for RMSE evaluation. we do NOT touch property.test until the very final prediction step.
+
+set.seed(1234)
+prop_split    <- initial_split(property.train, prop = 0.75)
+prop_analysis <- training(prop_split)  
+prop_val      <- testing(prop_split)    
+```
+
+### Step 3 — Modelling Techniques Tried
+
+#### 3.1 Model A — Linear Regression
+
+##### Round 1: Fit linear regression with all predictors
+
+```{r}
+# Train a model on prop_analysis, and then predict prop_val  and evaluate the RMSe
+prop.lm <- linear_reg()|> fit(price_per_unit ~., data = prop_analysis)
+
+# The R² value is 0.55, indicating that the model explains 55% of the variation in the target variable .
+glance(prop.lm)                    
+
+# Select p.value > 0.05 (likely candidates for removal)
+tidy(prop.lm) |> filter(p.value > 0.05)
+
+# Calculate RMSE
+prop.lm.pred<-prop.lm  |> augment(prop_val )
+prop.lm.pred |>  rmse(truth = price_per_unit, estimate = .pred)
+
+```
+
+##### Round 2: Establish a Baseline Model
+
+```{r}
+# Fit a null model (intercept only) to represent the average price
+prop.base <- linear_reg() |> 
+  fit(price_per_unit ~ 1, data = prop_analysis)
+
+# Check the model summary to confirm the intercept 
+prop.base |> tidy()
+
+# Evaluate Baseline Performance
+prop_val |>
+  mutate(mean_price = 37.54353)|>
+  rmse(truth = price_per_unit, estimate = mean_price)
+
+```
+
+##### Round 3: Reduced model(-longitude)
+
+```{r}
+# Based on the tidy process in Round 1, we attempted to remove the longitude variable and then observed the RMSE value.
+prop.lm2 <- linear_reg()|> fit(price_per_unit ~.-longitude, data = prop_analysis)
+
+# The R² value is 0.55, .
+glance(prop.lm2)                    
+
+#After removing longitude, the RMSE decreased from 11.39 to 11.31.
+prop.lm2.pred<-prop.lm2  |> augment(prop_val )
+prop.lm2.pred |>  rmse(truth = price_per_unit, estimate = .pred)
+```
+
+##### Round 4: AIC backward stepwise selection
+
+```{r}
+# The RMSE value is the same as in Round 3,The step() function, during the automated selection process, found that 
+# removing any other variables would increase the AIC value, so it ultimately chose to remove only longitude.
+prop.lm <- lm(price_per_unit ~ ., data = prop_analysis)
+prop.lm3 <- step(prop.lm)  
+
+tidy(prop.lm3)    
+glance(prop.lm3) 
+
+prop.lm3.pred <- augment(prop.lm3, newdata = prop_val)
+prop.lm3.pred |>  rmse(truth = price_per_unit, estimate = .fitted)
+
+
+```
+
+#### 3.2 Model B — Regression Tree
+
+##### Round 1: Fit complex tree with small cp to see full structure
+
+```{r}
+# cp (complexity parameter):0.001
+tree_complex <- rpart(price_per_unit ~ .,
+                      data = prop_analysis, cp = 0.001)
+
+# printcp() shows cross-validation error (xerror) for each cp level
+# As size increases from 1 to 2, the error drops rapidly from about 1.0 to around 0.55, indicating that adding 
+# a small number of branches significantly improves the model’s performance. After size > 2, the curve gradually flattens out.
+cp_table <- printcp(tree_complex)
+plotcp(tree_complex)  
+
+# The smallest nsplit value (only 2 splits). Therefore, the recommended optimal Cp value is 0.0356.
+cp_table |> 
+  as_tibble() |> 
+  mutate(limit = min(xerror + xstd)) |> 
+  filter(xerror <= limit)
+```
+
+##### Round 2: Fit three trees at different cp values and compare
+
+```{r}
+# Testing cp = 0.1 (simple),0.01 (default), and the 1-SE optimal cp
+
+tree_simple <- decision_tree(mode = "regression", cost_complexity = 0.1) |>
+  fit(price_per_unit ~ ., data = prop_analysis)
+tree_default <- decision_tree(mode = "regression", cost_complexity = 0.01) |>
+  fit(price_per_unit ~ ., data = prop_analysis)
+tree_optimal <- decision_tree(mode = "regression", cost_complexity = 0.0356) |>
+  fit(price_per_unit ~ ., data = prop_analysis)
+```
+
+##### Round 3: Compare RMSE on VALIDATION SET for all three trees
+
+```{r}
+# The Default Tree performs the best, with an RMSE of 10.89, which is clearly better than the tuned Optimal Tree (11.20) and the most basic Simple Tree (11.86).
+tree_simple.pred <- augment(tree_simple, new_data = prop_val)
+tree_simple.pred |>  rmse(truth = price_per_unit, estimate = .pred)
+
+tree_default.pred <- augment(tree_default, new_data = prop_val)
+tree_default.pred |>  rmse(truth = price_per_unit, estimate = .pred)
+
+tree_optimal.pred <- augment(tree_optimal, new_data = prop_val)
+tree_optimal.pred |>  rmse(truth = price_per_unit, estimate = .pred)
+
+
+```
+
+#### 3.3 Model C — Random Forest
+
+##### Round 1: Default random forest
+
+```{r}
+# Round 1: Default random forest 
+# mtry defaults to p/3 = 6/3 = 2; nodesize defaults to 5 for regression
+set.seed(1234)
+prop.rf <- rand_forest(mode = "regression", engine = "randomForest",mtry=2,min_n=5) |>
+  fit(price_per_unit ~ .,data = prop_analysis)
+
+prop.rf.pred <- prop.rf |> augment(new_data = prop_val)
+prop.rf.pred |> rmse(truth = price_per_unit, estimate = .pred)
+
+```
+
+##### Round 2: Random forest- change nodesize
+
+```{r}
+# After reducing min_n from 5 to 3, the RMSE on the validation set decreased from 10.398 to 10.329.
+set.seed(1234)
+prop.rf2 <- rand_forest(mode = "regression", engine = "randomForest",mtry=2,min_n=3) |>
+  fit(price_per_unit ~ .,data = prop_analysis)
+
+prop.rf2.pred <- prop.rf2 |> augment(new_data = prop_val)
+prop.rf2.pred |> rmse(truth = price_per_unit, estimate = .pred)
+
+```
+
+##### Round 3: Random forest- change mtry
+
+```{r}
+# After increasing mtry from 2 to 3 (while keeping min_n = 3), the RMSE further decreased from 10.329 to 10.215.
+set.seed(1234)
+prop.rf3 <- rand_forest(mode = "regression", engine = "randomForest",mtry=3,min_n=3) |>
+  fit(price_per_unit ~ .,data = prop_analysis)
+
+prop.rf3.pred <- prop.rf3 |> augment(new_data = prop_val)
+prop.rf3.pred |> rmse(truth = price_per_unit, estimate = .pred)
+
+```
+
+#### 3.4 Model D — Neural Network (Scaled Inputs Required)
+
+```{r}
+library(tidymodels)
+set.seed(1234)
+# This follows the recipe workflow.
+# Create our recipe
+prop_rec <- recipe(price_per_unit ~ .,
+                   data = prop_analysis) |>
+  step_normalize(all_numeric_predictors()) |>  
+  prep(training = prop_analysis)               
+
+# Create a model
+spec_nn <- mlp(mode         = "regression",
+               engine       = "nnet",
+               hidden_units = 3,       
+               penalty      = 0.01,  
+               epochs       = 1000) 
+
+# Train a model
+fit_nn <- spec_nn |>
+  fit(price_per_unit ~ .,  data = bake(prop_rec, prop_analysis))
+
+# Check we're reaching converge
+# convergence: 0 = converged, 1 = did not converge
+fit_nn |> extract_fit_engine() |> pluck("convergence")
+
+# Apply to test set and evaluate
+pred_nn <- prop_val |> 
+  bind_cols(
+    predict(fit_nn, new_data = bake(prop_rec, prop_val))
+  )
+
+# Alternatively with argument
+pred_nn <- fit_nn |> augment(new_data = bake(prop_rec, prop_val))
+
+# Evaluate the model
+pred_nn |> rmse(truth = price_per_unit, estimate = .pred)
+```
+
+### Step 4 — Refit on Full Training Data and Predict Test Set
+
+```{r}
+# Now that we have selected the best model using prop_analysis + prop_val, 
+# we refit it on ALL 310 rows of property.train to maximize the information used before predicting. 
+set.seed(1234)
+prop.fina <- rand_forest(mode = "regression", engine = "randomForest", mtry = 3, min_n = 3) |> 
+  fit(price_per_unit ~ ., data = property.train)
+
+prop.final.pred<- prop.fina |> augment(new_data = property.train) |>select(-price_per_unit)
+
+# Distribution of training outcomes
+ggplot(property.train) +
+  geom_density(mapping=aes(x = price_per_unit)) +
+  labs(title = "Distribution of training price_per_unit")
+
+# Distribution of predictions
+# The predicted and actual values are concentrated between 20 and 60, with the distribution flattening beyond 90.
+ggplot(prop.final.pred) +
+  geom_density( mapping=aes(x = .pred)) +
+  labs(title = "Distribution of predictions")
+
+# histogram comparison
+# The distribution comparison plot shows that the model performs consistently.
+bind_rows(
+  list(
+    predict = prop.final.pred |> rename(price_per_unit = .pred),
+    train   = property.train
+  ),
+  .id = "data"
+) |>
+  ggplot(mapping=aes(x = price_per_unit, fill = data)) +
+  geom_histogram(alpha = 0.6, position = "identity", bins = 30) +
+  facet_wrap(vars(data), ncol = 1, scales = "free_y") +
+  labs(title = "Predictions vs Training distribution")
+
+# It can be seen that the mean of the residuals is close to zero, indicating that the model is generally appropriate.
+prop.final.pred|>skimr::skim()
+
+# Generate predictions for property_test.csv
+ex1 <- property.test |> 
+  bind_cols(predict(prop.fina, new_data = property.test))
+
+# Verify submission format: test rows + exactly one column named .pred
+# check predictions are in reasonable range
+ex1 |> slice_head(n = 6)  
+
+# Write submission file
+ex1 |> write_csv("ex1_studentid.csv")
+```
+
+## Exercise 1 Methodology
+
+**Exploratory Analysis.** The training dataset contains`no missing`
+values (1a). It includes 310 observations and 7 variables. Among them,
+transit_distance shows a wide range, from 23 to 6,488 (mean = 1,086),
+while price_per_unit ranges from 7.6 to 117.5 (mean = 37.9) (1b).
+
+Faceted scatter plots reveal a clear negative relationship between
+transit_distance and price_per_unit. In contrast, latitude, longitude,
+and nearby_stores exhibit moderate positive correlations with the target
+variable, whereas sale_time shows almost no linear association with the
+outcome (1c).
+
+After applying a `log transformation` to transit_distance, its
+relationship with price_per_unit becomes clearer (1d).
+
+**Data Processing.** To ensure prediction accuracy and select the
+optimal model, the property.train set is split into two parts:
+approximately 75% (232 observations) is used for model fitting, and the
+remaining 25% (78 observations) is reserved for RMSE evaluation. The
+property.test set is used solely for the final prediction step.
+
+**Modelling Techniques Tried.** We evaluated four different types of
+models, with all RMSE values computed on the validation set:
+
+##### Model A – Linear Regression.
+
+A full-variable `linear regression` model achieved an RMSE of `11.39`.
+In this step, based on p-values, longitude was identified as the least
+influential variable (Round 1).
+
+In Round 2, a `baseline`model using the mean value as prediction was
+established (`RMSE = 16.31`).
+
+In Round 3, after `removing longitude`, the RMSE decreased slightly from
+11.39 to `11.31`.
+
+In Round 4, an `AIC-based backward stepwise` model was applied, which
+again resulted in an RMSE of `11.31`. This indicates that removing
+longitude is sufficient, while eliminating other variables does not
+further improve performance.
+
+##### Model B – Regression Tree.
+
+A `complex tree (cp = 0.001)` was pruned using the 1-SE rule, resulting
+in an `optimal cp = 0.0356` (2 splits) with an RMSE of `11.20`. However,
+the `default tree` (cp = 0.01) performed best overall, achieving an RMSE
+of `10.89`, outperforming both the pruned tree and the `simple tree` (cp
+= 0.1, `RMSE = 11.86`).
+
+##### Model C – Random Forest.
+
+The `default configuration (mtry = 2, nodesize = 5)` achieved an RMSE of
+`10.39`. Increasing `mtry to 3` (nodesize = 5) further improved
+performance (`RMSE = 10.33`). Finally, adjusting both
+`mtry = 3 and nodesize = 3` produced the best result with an
+`RMSE of 10.215`, making it the optimal configuration.
+
+##### Model D – Neural Network.
+
+A single-hidden-layer `neural network` (3 hidden units, penalty = 0.01)
+achieved an RMSE of `10.61`.
+
+**Final Model Selected.** The final model selected is the
+`Random Forest` with `mtry = 3 and nodesize = 3`, which achieved the
+lowest `RMSE of 10.215`. We applied this model to the full dataset of
+310 observations for prediction. From the comparison plots, it is
+evident that the predicted distribution closely follows the actual
+distribution, with a high degree of similarity in overall patterns and
+the mean residuals is small(-0.09). This indicates that the model has
+strong predictive performance and good practical applicability.
+
+## Exercise 2: Wheat Variety Classification
+
+### STEP 1: Exploratory Data Analysis
+
+```{r, echo=TRUE, warning=FALSE, message=FALSE}
+# # 1a. Check for missing values — confirms 100% present, no missingness
+naniar::vis_miss(wheat.train)  
+
+# # 1b. Preview Training Data
+# This helps inspect the predictor structure and the target variable
+wheat.train |> slice_head(n = 6)
+
+# 1c.Explore: Class Balance
+# counts how many training observations belong to each variety.
+# The sample sizes for all three categories (Canadian, Kama, and Rosa) are exactly the same-52
+wheat.train |> count(variety)
+
+
+# 1d.Summary statistics for all variables: mean, sd, quartiles, histogram 
+# In each category, the maximum value differs substantially from the mean, suggesting the presence of outliers. 
+# The histograms also exhibit similar distribution patterns, which will be illustrated further through visualizations.
+skimr::skim(wheat.train)  
+
+# 1e.Density Plot: distribution of each predictor coloured by variety
+# The uneven data distribution makes the differences among variables across the different varieties less apparent,
+wheat.train |>
+  pivot_longer(-variety) |>
+  ggplot() +
+  geom_density(aes(x = value, col = variety)) +
+  facet_wrap(vars(name), scales = "free") +
+  labs(title = "Predictor distributions by wheat variety")
+
+# 1f. Boxplots: confirm group separation in each predictor
+wheat.train |>
+  pivot_longer(-variety) |>
+  ggplot() +
+  geom_boxplot(aes(x = variety, y = value, fill = variety)) +
+  facet_wrap(vars(name), scales = "free") +
+  labs(title = "Boxplots of predictors by variety")
+
+# 1g.Pairs plot: pairwise scatter coloured by variety
+# Observation: many predictors are highly correlated (Most r > 0.97)
+ggpairs(wheat.train, mapping = aes(col = variety, alpha = 0.4))
+
+# 1h. Group means by variety 
+wheat.train |>
+  group_by(variety) |>
+  summarise(across(where(is.numeric), mean)) |>
+  print()
+
+# 1i. filter outliers and then plot boxplots and Density
+wheat.train.clean <- wheat.train |>
+  filter(
+    groove_length < 20,
+    kernel_area < 50,
+    kernel_asymmetry < 20,
+    kernel_compactness < 2,
+    kernel_length < 20,
+    kernel_perimeter < 50,
+    kernel_width < 10
+  )
+wheat.train.clean|>
+  pivot_longer(-variety) |>
+  ggplot() +
+  geom_density(aes(x = value, col = variety)) +
+  facet_wrap(vars(name), scales = "free") +
+  labs(title = "Predictor distributions by wheat variety-clean")
+wheat.train.clean |>
+  pivot_longer(-variety) |>
+  ggplot() +
+  geom_boxplot(aes(x = variety, y = value, fill = variety)) +
+  facet_wrap(vars(name), scales = "free") +
+  labs(title = "Boxplots of predictors by variety-clean")
+
+
+```
+
+### Step 2 — Data processing
+
+```{r}
+# -----------------------------------------------------------------------------------------
+# TRAIN / VALIDATION SPLIT
+# Use 75% (~117 rows) for fitting and 25% (~39 rows) for evaluation.
+# We do NOT touch wheat.test until final prediction step.
+# -----------------------------------------------------------------------------------------
+
+set.seed(1234)
+wheat_split    <- initial_split(wheat.train, prop = 0.75)
+wheat_analysis <- training(wheat_split)   # train (75%) — used for model fitting
+wheat_val      <- testing(wheat_split)    # val (25%)  — used for RMSE evaluation
+```
+
+### Step 3 — Fitting multiple candidate models (on wheat_analysis)
+
+```{r}
+set.seed(1234)
+library(kknn)  
+
+# Define all 6 model in a named list(nn1=non-standardized neural network)
+models <- list(
+
+  # Linear Discriminant Analysis
+  lda = discrim_linear(),
+
+  # Naive Bayes with kernel density estimationn,
+  nb  = naive_Bayes(engine = "naivebayes"),
+
+  # K-Nearest Neighbours (k = 5 default)
+  knn = nearest_neighbor(mode = "classification", neighbors = 5),
+
+  # Decision Tree (min_n = 5)
+  rp  = decision_tree(mode = "classification", min_n = 5),
+
+  # Random Forest
+  rf  = rand_forest(mode = "classification"),
+   
+  #  neural network
+  # p = 7 numeric predictors → ceiling(7/2) = 4 hidden units
+  nn1 = mlp(mode="classification",
+  hidden_units = 4, epochs = 1000))
+
+
+# Fit all five models simultaneously on the analysis (training) split
+fitted_models <- models |>
+  map(fit, variety ~ ., data = wheat_analysis)
+```
+
+### Step 4 — Neural networks (standardise).
+
+```{r}
+set.seed(1234)
+library(recipes)
+# Neural networks are sensitive to scale — standardise all numeric predictors.
+wheat.rec <- recipe(variety ~ ., data = wheat_analysis) |>
+  step_normalize(all_numeric_predictors()) |>
+  prep(wheat_analysis)
+
+# hidden_units = ceiling(p/2) per 
+# p = 7 numeric predictors → ceiling(7/2) = 4 hidden units
+wheat.nn <- mlp(
+  mode         = "classification",
+  hidden_units = 4,      
+  penalty      = 0.01,   
+  epochs       = 1000    
+) |>
+  fit(variety ~ .,
+      data = bake(wheat.rec, wheat_analysis))    
+
+# Check for convergence
+ wheat.nn |> pluck("fit", "convergence")
+```
+
+### Step 5 — Multinomial Logistic Regression.
+
+```{r}
+set.seed(1234)
+wheat.mn <- multinom_reg() |>
+  fit(variety ~ ., data = wheat_analysis)
+
+wheat.mn |>
+  augment(new_data = wheat_val) |>
+  accuracy(truth = variety, estimate = .pred_class)
+
+wheat.mn |>
+  augment(new_data = wheat_val) |>
+  conf_mat(truth = variety, estimate = .pred_class)
+```
+
+### Step 6 — Compare all models on wheat.val
+
+```{r}
+set.seed(1234)
+library(recipes)
+# Generate predictions for the 6 models on the validation set
+val_preds <- fitted_models |>
+  map(augment, new_data = wheat_val) |>
+  bind_rows(.id = "model")
+
+# Calculate validation accuracy for 6 models
+val_accuracy <- val_preds |>
+  group_by(model) |>
+  accuracy(truth = variety, estimate = .pred_class) |>
+  arrange(desc(.estimate))
+
+# Calculate validation accuracy for the Neural Network
+nn_val_preds <- wheat.nn |>
+  augment(new_data = bake(wheat.rec, wheat_val))
+
+nn_val_acc <- nn_val_preds |>
+  accuracy(truth = variety, estimate = .pred_class) |>
+  mutate(model = "nn")
+
+ wheat.mn_acc <-wheat.mn |>
+  augment(new_data = wheat_val) |>
+  accuracy(truth = variety, estimate = .pred_class) |>
+  mutate(model="Multinomial LR")
+
+# Combine all model accuracy results to select the best model
+all_val_accuracy <- bind_rows(val_accuracy, nn_val_acc,wheat.mn_acc) |>
+  arrange(desc(.estimate))
+
+print(all_val_accuracy)
+
+# Results:
+#   rp  (Decision Tree)    0.974   ← BEST
+#   nb  (Naive Bayes)      0.949
+#   Multinomial LR         0.949
+#   rf  (Random Forest)    0.923
+#   nn  (Neural Network)   0.923   ← Standardized
+#   nn1                    0.897   ← No Standardized
+#   lda (LDA)              0.897
+#   knn (KNN k=5)          0.872
+
+# Confusion matrices for the five non-NN models — inspect which varieties are confused
+# The Decision tree model made just one incorrect prediction: one actual Kama sample was misclassified as Canadian.
+fitted_models |>
+  map(augment, new_data = wheat_val) |>
+  map(conf_mat, truth = variety, estimate = .pred_class)
+
+# Confusion matrix for the Neural Network
+nn_val_preds |>
+  conf_mat(truth = variety, estimate = .pred_class)
+
+```
+
+### Step 7— Refit the best model using all wheat.train rows
+
+```{r}
+library(recipes)
+# Decision tree achieved the highest validation accuracy (97.4%),
+# so we select it as the final mode .
+best_spec <- decision_tree(mode = "classification")
+
+# Refit on the combined training + validation set (all 156 rows of wheat.train)
+final_model <- best_spec |>
+  fit(variety ~ ., data = wheat.train)  
+
+# Apply the final model to the unlabelled test set and extract predicted class labels
+ex2  <- wheat.test |>
+  bind_cols(
+    final_model |>
+      augment(new_data = wheat.test) |>
+      select(.pred_class)                       
+  )
+# preview first 6 predictions
+ex2 |> slice_head(n = 6)  
+
+# Write submission file
+ex2|>write_csv("ex2_studentid.csv")
+```
+
+### Step 8 — Accuracy evaluation after removing outliers
+
+```{r}
+set.seed(1234)
+library(recipes)
+#split clean data
+wheat_split  <- initial_split(wheat.train.clean, prop = 0.75)
+wheat_analysis_clean <- training(wheat_split )   
+wheat_val_clean      <- testing(wheat_split )    
+
+# Define all six  model (nn1:non-standardized neural network )
+models_clean <- list(
+  lda_clean = discrim_linear(),
+  nb_clean  = naive_Bayes(engine = "naivebayes"),
+  knn_clean = nearest_neighbor(mode = "classification", neighbors = 5),
+  rp_clean  = decision_tree(mode = "classification", min_n = 5),
+  rf_clean  = rand_forest(mode = "classification"),
+  nn1_clean = mlp(mode="classification",
+  hidden_units = 4, epochs = 1000))
+# Multinomial Regression (
+wheat.mn_clean <- multinom_reg() |>
+  fit(variety ~ ., data = wheat_analysis_clean)
+
+# Fit all six models
+fitted_models_clean <- models_clean |>
+  map(fit, variety ~ ., data = wheat_analysis_clean)
+
+
+# Generate predictions for the 6 models on the validation set
+val_preds_clean <- fitted_models_clean |>
+  map(augment, new_data = wheat_val_clean) |>
+  bind_rows(.id = "model")
+# Calculate validation accuracy for non-NN models
+val_accuracy_clean <- val_preds_clean |>
+  group_by(model) |>
+  accuracy(truth = variety, estimate = .pred_class) |>
+  arrange(desc(.estimate))
+
+
+# Neural networks— standardise
+wheat.rec_clean <- recipe(variety ~ ., data = wheat_analysis_clean) |>
+  step_normalize(all_numeric_predictors()) |>
+  prep(wheat_analysis_clean)
+
+wheat.nn_clean <- mlp(
+  mode         = "classification",
+  hidden_units = 4,      
+  penalty      = 0.01,   
+  epochs       = 1000    
+) |>
+  fit(variety ~ .,
+      data = bake(wheat.rec_clean, wheat_analysis_clean))    
+
+# Check for convergence
+ wheat.nn_clean |> pluck("fit", "convergence")
+
+# Calculate validation accuracy for the Neural Network
+# Apply the same normalisation recipe to the validation set (bake uses training stats)
+nn_val_preds_clean <- wheat.nn_clean |>
+  augment(new_data = bake(wheat.rec_clean, wheat_val_clean))
+
+nn_val_acc_clean <- nn_val_preds_clean |>
+  accuracy(truth = variety, estimate = .pred_class) |>
+  mutate(model = "nn_clean")
+
+wheat.mn_acc_clean <-wheat.mn_clean |>
+  augment(new_data = wheat_val_clean) |>
+  accuracy(truth = variety, estimate = .pred_class) |>
+  mutate(model="Multinomial LR_clean")
+
+# Combine all model accuracy results to select the best performer
+all_val_accuracy_clean <- bind_rows(val_accuracy_clean, nn_val_acc_clean,wheat.mn_acc_clean) |>
+  arrange(desc(.estimate))
+
+print(all_val_accuracy_clean)
+# After removing outliers, the accuracy of the LDA model increased from 89.7% to 97.4%, while the accuracy of the unstandardized Neural Network model also improved from 89.7% to 97.4%. However, the accuracy of the RP model decreased from 97.4% to 84.6%. Since the outliers were not caused by input errors and similar outliers may also appear in the test set, the final model selection remains the RP model trained on the original dataset without outlier removal.
+```
+
+### 2.1 Wheat Variety Methodology
+
+**Exploratory Analysis.** The training dataset contains `no missing`
+values (1a), and each variety class has an identical count of
+`52 observations` (1c). The density plots illustrate the distribution of
+each predictor across the three varieties, with only kernel asymmetry,
+kernel area, and groove length showing noticeable distinctions among the
+classes (1e). The boxplots indicate that all variables contain
+`outliers`, and these outliers are present and evenly distributed across
+all three classes (1f). The pair plot reveals strong correlations among
+variables, with most r > 0.97 (1g). After removing the outliers, the
+resulting boxplots and density plots exhibited clearer trends (1i).
+
+**Modelling Techniques Tried.** `Seven classification` methods were
+applied using the 75% dataset for model fitting and the remaining 25%
+for validation. For parameter selection, KNN used k=5, the Decision Tree
+used min_n=5, and the Neural Network consisted of a hidden layer
+with ⌈7/2⌉=4 units, a penalty of 0.01, and 1,000 epochs.
+
+``Outlier removal`` was explored in Step 8, improving the neural network
+accuracy (89.7%→97.4%) but reducing the Decision Tree accuracy
+(97.4%→84.6%). Since outliers were not caused by data entry errors and
+may also be present in the test data, the original dataset was retained.
+
+For the ``Neural Network`` model, we compared the performance between the
+standardized data and the original dataset. After standardization, the
+accuracy improved notably from 89.7% to 92.3%.
+
+Model summary:
+
+| Model                | Validation Accuracy |
+|:---------------------|:--------------------|
+| Decision Tree (rp)   | 0.974               |
+| Naive Bayes (nb)     | 0.949               |
+| Multinomial LR       | 0.949               |
+| Random Forest (rf)   | 0.923               |
+| Neural Network (nn)  | 0.923               |
+| LDA                  | 0.897               |
+| Neural Network (nn1) | 0.897               |
+| KNN (k=5)            | 0.872               |
+
+**Final Model Selected.** Based on the accuracy results, the Decision
+Tree model achieved the highest accuracy at ``97.4%``, only one
+misclassification occurred (Kama predicted as Canadian). The model
+achieved 100% correct separation for the ``Rosa`` and ``Canadian`` wheat
+varieties.To ensure optimal performance, we trained the model(Decision
+Tree) on the entire training dataset before testing.
+
+
+### 2.2 Wheat Variety Explainability
+
+#### Group means by variety(Step 1: 1h)
+
+| Variety  | area | perimeter | compactness | length | width | asymmetry | groove |
+|----------|------|-----------|-------------|--------|-------|-----------|--------|
+| Canadian | 14.0 | 15.6      | 0.993       | 6.17   | 3.34  | 5.78      | 6.06   |
+| Kama     | 16.9 | 16.8      | 1.03        | 6.47   | 3.81  | 3.18      | 6.00   |
+| Rosa     | 21.5 | 18.9      | 1.04        | 7.16   | 4.33  | 4.13      | 7.02   |
+
+The mean table shows Rosa has the largest kernel area (21.5), perimeter
+(18.9), and groove length (7.16), while Canadian has the smallest kernel
+area (14) and perimeter (15.6) but the highest asymmetry (5.78), and
+Kama has the lowest asymmetry (3.18). The density plots and boxplots
+(Step 1: 1i) confirm that kernel width, area, and perimeter separate all
+three varieties with no overlap , and groove length
+distinctly separates Rosa from the other two. Pairs Plot (Step 1: 1g)
+reveals correlations exceeding 97% among most predictors, 2–3 variables
+such as kernel width and groove length are sufficient for effective
+classification.

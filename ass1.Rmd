@@ -1,0 +1,330 @@
+---
+title: "161.777 Practical Data Mining"
+subtitle: "Assignment 1, 2026"
+author: "LinXin GUO"
+output: html_document
+---
+
+```{r setup, echo=TRUE, warning=FALSE, message=FALSE}
+# Add any other packages you need to load here.
+library(tidyverse)
+
+# Read in the data
+climate <- read_csv("https://www.massey.ac.nz/~jcmarsha/161777/data/climate.csv")
+athletes <- read_csv("https://www.massey.ac.nz/~jcmarsha/161777/data/athletes.csv")
+```
+
+**THIS FILE IS WHERE YOU WRITE YOUR ANSWERS. THE QUESTIONS ARE AVAILABLE ON STREAM**
+
+## Exercise 1: Analysis of Incomplete Temperature
+
+### 1.1. Precise year and month
+
+```{r}
+# a. The last observation was made at location A
+climate |>  
+  select(Year, Month,A) |> # Select the data for location A.
+  arrange(desc(Year),desc(Month)) |> # Arrange the data so that the last observation appears first.
+  filter(!is.na(A)) |>  # Remove rows with missing values (NA), keeping only valid observations.
+  mutate(P_year=Year+1863-1,P_month=Month) |> # Create a new column for the exact year and add a month column.Keep  the month numbers unchanged; only rename the column to align with the year column.
+  select(P_year,P_month) |> # Keep only the calculated year and month columns.
+  slice_max(P_year,n=1) |> # Select the most recent year (last observation).
+  slice_max(P_month,n=1) # Select the most recent month (last observation).
+
+```
+```{r}
+# a. The last observation was made at location A (make_datetime function)
+library(lubridate)
+climate|>
+  select(Year,Month,A) |>  # Select the data for location A.
+  filter(!is.na(A)) |>   # Remove rows with missing values (NA), keeping only valid observations.
+  mutate(time=make_datetime(year=1863+Year-1,month=Month,day = 1)) |>  # Create a new column representing the precise year(new function).
+  slice_max(time,n=1) |>   # choose the largest time, get the time directly or continue next step.
+  mutate(P_year=year(time),P_month=month(time)) |>  # Create two columns-year and month.
+  select(P_year,P_month)  # Select the last observation for location A.
+
+```
+
+```{r}
+# b. The first observation was made at location B
+climate |>
+select(Year, Month,B)|>  # Choose B data set.
+  filter(!is.na(B)) |>  # Delete the data is NA.
+  arrange(Year,Month) |>   # Identify the earliest year and month.
+  mutate(F_year=min(Year),F_month=min(Month)) |> # Create columns for the earliest year and month.
+  select(F_year,F_month) |>   # Retain only the relevant columns.
+  slice_sample(n=1) |>   # Select the first row.
+  mutate(P_year=F_year+1863-1,P_month=F_month) |>  # Compute the precise year and month.
+  select(P_year,P_month)    # Select the first observation for location B.
+# Location A ends in March 1924, while location B begins in January 1924, which matches the description "only three months over the entire period for which data are available at both A and B".
+```
+
+```{r}
+# b. The first observation was made at location B (make_datetime function)
+library(lubridate)
+climate|>
+  select(Year,Month,B) |>   # Choose B data set.
+  filter(!is.na(B)) |>   # Delete the data is NA.
+  mutate(time=make_datetime(year=Year+1863-1,month=Month)) |>    # Compute the precise year and month.
+  arrange(time) |>  # Identify the earliest year and month.
+  select(time) |>   # Retain only the relevant columns.
+  slice_min(time,n=1) |>    # Select the first row,get the time directly or continue next step.
+  mutate(P_year=year(time),P_month=month(time)) |> # Create two columns-year and month.
+  select(P_year, P_month) # Select the first observation for location B.
+
+```
+
+
+
+
+### 1.2. Table of mean temperature by month for locations C and D
+
+```{r}
+# Mean temperature by month in locations C and D - month.abb.
+climate |>
+  select(Month, C, D) |>  #Select the data set
+  filter(!is.na(C)) |>    #Ensure that the C column contains numeric values.
+  filter(!is.na(D)) |>    #Ensure that the D column contains numeric values.
+  group_by(Month)|>    #Group the data by month.
+  summarise(mean_c=mean(C),mean_d=mean(D)) |> #Calculate the mean temperatures for C and D by month.
+  mutate(month=month.abb[Month]) |> #Add a column with descriptive month names using a month vector.
+  select(month,mean_c,mean_d) #Retain only the required information.
+```
+```{r}
+# Mean temperature by month in locations C and D - month.name
+climate |>
+  select(Month, C, D) |>  # Select the data set
+  group_by(Month)|>    # Group the data by month.
+  summarise(mean_c=mean(C),mean_d=mean(D),na.rm=TRUE) |> # Calculate the mean temperatures for C and D by month,  # Ensure that the C D column contains numeric values.
+  mutate(month=month.name[Month] )|># Add a column with descriptive month names.
+  select(month,mean_c,mean_d) # Retain only the required information.
+```
+
+### 1.3. Monthly temperatures at location C in 1919
+
+```{r}
+# Produce a bar plot of the monthly temperatures at location C in 1919.
+climate |>
+  mutate(year=1863+Year-1) |>  # Compute the precise year and month.
+  filter(year==1919) |>  # Choose the aim year.
+  mutate(month=month.abb[Month])|>  # Numeric values (1–12) are not intuitive for representing months.Therefore, convert them to month names.
+  select(month,C)|>   # Keep only the necessary data for plotting.
+  rename(temperature_c=C) |>  # Using “C” directly as an axis label is unclear, so it is renamed for better interpretation.
+# Ensure months are ordered correctly (Jan to Dec) for plotting.
+  mutate(month = fct_relevel(month, "Jan", "Feb", "Mar", "Apr", "May", "Jun", 
+                                            "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")) |>
+# Use the fct_relevel() function to define the month order, because when I finished the code, the months were messy, so use the last visualization practice function from Workshop 2.
+  ggplot(mapping=aes(x=month,y=temperature_c))+  # Define x,y data.
+  geom_col(fill='Purple',alpha=0.3)+  # Change the color more clear to show in a low transparency.
+  labs(x="Each month", 
+       y="Temperature(℃)",
+       title="Monthly Temperature at Location C in 1919",
+       caption="Data from the UK") #Add axis labels,title,caption with labs().
+#From this plot, it is clear that the temperature in 1919 ranged between 5°C and 20°C throughout the year. The highest temperature occurred in June, while the lowest was in December. The weather was warmer in summer, whereas it was colder in winter and early spring.
+```
+
+### 1.4. Monthly temperatures in 1924 for all locations
+
+```{r}
+#Step 1: Impute missing values using k-Nearest Neighbors (k = 5).
+library(VIM)   # Load necessary library.
+climate_na <- climate |>
+  kNN(k=5)  # Replace missing values based on similarity with 5 nearest observations.
+
+# Step 2: Select and prepare data for the target year (1924).
+climate_1924 <- climate_na |> 
+  mutate(year = 1863 + Year - 1) |>  # Convert the original Year index into actual calendar year.
+  filter(year == 1924) |>   # Filter data for the year 1924.
+  mutate(month = month.abb[Month]) |>   # Convert numeric month (1–12) into month abbreviations (Jan–Dec).
+# Ensure months are ordered correctly (Jan to Dec) for plotting.
+  mutate(month = fct_relevel(month, "Jan", "Feb", "Mar", "Apr", "May", "Jun",
+                                     "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")) |> 
+  select(month, A, B, C, D, A_imp, B_imp, C_imp, D_imp) # Keep only relevant variables.
+climate_1924 
+```
+
+
+```{r}
+# Produce a bar plot of the monthly temperatures at all four locations in 1924.
+
+#Step 1: Impute missing values using k-Nearest Neighbors (k = 5).
+library(VIM)   # Load necessary library.
+climate_na <- climate |>
+  kNN(k=5)  # Replace missing values based on similarity with 5 nearest observations.
+
+# Step 2: Select and prepare data for the target year (1924).
+climate_1924 <- climate_na |> 
+  mutate(year = 1863 + Year - 1) |>  # Convert the original Year index into actual calendar year.
+  filter(year == 1924) |>   # Filter data for the year 1924.
+  mutate(month = month.abb[Month]) |>   # Convert numeric month (1–12) into month abbreviations (Jan–Dec).
+# Ensure months are ordered correctly (Jan to Dec) for plotting.
+  mutate(month = fct_relevel(month, "Jan", "Feb", "Mar", "Apr", "May", "Jun",
+                                     "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")) |> 
+  select(month, A, B, C, D, A_imp, B_imp, C_imp, D_imp) # Keep only relevant variables.
+
+# Step 3: Create the bar plot dataset (monthly data for each location and data status).
+# Convert data from wide to long format（temperature).
+climate_values <- climate_1924 |>   # Reshape to obtain temperature values for each location and month temperature values.
+  select(month, A, B, C, D) |>      # Keep only temperature-related variables.
+  pivot_longer(cols = c(A,B,C,D),       # Columns A–D are gathered into a new "location" column.
+               names_to = "location", 
+               values_to = "temp")
+
+# Convert data from wide to long format(data condition).
+climate_imp <- climate_1924 |>    # Reshape to obtain the data status (True/False) for each location and month data condition-real or imputed data.
+  select(month, A_imp, B_imp, C_imp, D_imp) |>  # Keep only relevant variables.
+  rename(A = A_imp, B = B_imp, C = C_imp, D = D_imp) |>  # Rename columns to match temperature data for merging.
+  pivot_longer(
+    cols = c(A, B, C, D),    # Gather columns A–D into a "location" column.
+    names_to = "location", 
+    values_to = "is_imputed"    # This logical column defines the data condition (True or False).
+  ) |> 
+  select(month, location, is_imputed)   # Keep only relevant variables for joining.
+
+#Combine temperature values and imputation status.
+climate_long <- climate_values |> # Create the final dataset for plotting.
+  left_join(climate_imp, by = c("month", "location")) # Join the imputation flag to the temperature dataset by month and location.
+
+# Step 4: Generate the target plot using the prepared dataset.
+climate_long|>
+  ggplot(mapping=aes(x=month,y=temp,fill=is_imputed))+  # Use 'fill' to distinguish between real and imputed data.
+  geom_col(alpha=0.7)+  # Use a bar chart with semi-transparent colors.
+  facet_grid(rows=vars(location))+   # Create separate panels for each location.
+  scale_fill_manual(values=c("FALSE"="#C582B2","TRUE"="#B7B7B2"))+ 
+# Assign specific colors to real and imputed data (based on Workshop 2).
+  labs(x="Each month",     # Set appropriate axis labels and titles.
+       y="temperature(°C)",
+       fill="Data Type",
+       title="Monthly Temperature at Four Locations in 1924",
+       caption="Data from the UK")  
+# The plot indicates that only Location A contains imputed data from April to December, while all other locations. 
+# Consist of observed data. Temperatures from May to September are notably higher than in other months. 
+# The imputed values for Location A appear logically consistent, as they follow a trend similar to the measured data.
+```
+
+
+## Exercise 2: Detective Work for Athletes Data
+
+### 2.1. Find the incorrect entry and obtain the correct value
+
+```{r}
+# Question: One entry in the dataset is incorrectly recorded.Identify the data item and suggest the correct value.
+# Step 1: Use summary() to check the data.
+summary(athletes) #All the data looks logical, with no obvious issues, so we continue to the next check.
+```
+```{r}
+#Step 2: Check BMI values (Body Mass Index = weight / height^2).
+athletes |>
+  select(id,Wt,Ht,BMI) |>   # select the needed data.
+  mutate(n_BMI=Wt/(Ht/100)^2) |> # use the formula to create a new column for checking.
+  mutate(error=BMI-n_BMI) |>  # calculate the difference between the two values.
+  slice_max(error,n=3)   # choose the top 3 largest differences.
+# According to the BMI formula, we can identify that the athlete with id 141 has an incorrect BMI value.
+# The recorded value is 22.31, which is wrong due to a calculation error.
+# The BMI does not match the corresponding weight and height values.
+# The correct BMI for this athlete should be 19.22.
+```
+```{r}
+# Step 3: Use boxplot to find incorrect values.
+athlete_long <- athletes |>  
+  pivot_longer(
+    cols = c("Ht", "Wt", "LBM", "RCC", "WCC", "Hc", "Hg", "Ferr", "BMI", "SSF", "Bfat"), 
+    # Convert wide data to long format
+    names_to = "variable",  # Define the column name.
+    values_to = "value"     # Define the column values.
+  )  
+  athlete_long  |>        # Use the new dataset to create the plot.
+    ggplot(mapping=aes(x=variable,y=value))+       # Start plot.
+    geom_boxplot(mapping=aes(col=variable)) +   # Create boxplots to identify potential outliers and double-check for errors.
+    facet_wrap(vars(variable), scales="free") + # Split plots into different panels for better comparison.
+    labs(title = "Outlier Detection for Athlete Biometric Data")
+# Observations from the plots indicate the following:
+# - Ferr includes one upper outlier and one lower outlier;
+# - Hc includes two upper outliers;
+# - Ht includes one upper outlier;
+# - RCC includes multiple (at least three) upper outliers;
+# - SSF includes two upper outliers and two lower outliers;
+# - WCC includes one upper outlier and one lower outlier 
+# All the upper and lower outliers appear to be within a normal range.
+```
+
+
+
+### 2.2. Best three variables for separating sprinter and 400m groups
+
+```{r}
+# Step 1: Compare the difference between median and mean.
+long_athlete <-athletes |>
+  pivot_longer(      # In order to get different sports in different blood count data.
+   c("Ht", "Wt", "LBM", "RCC", "WCC", "Hc", "Hg", "Ferr", "BMI", "SSF", "Bfat"),  # Convert wide data to long format
+   names_to="variable",    # Define the column name.
+   values_to="value")       # Use the new dataset for analysis.
+long_athlete |>
+  group_by(Sport,variable) |> # Divide all sports data into groups.
+  summarise(Mean=mean(value,na.rm=TRUE),
+            Median=median(value,na.rm=TRUE)) |>  # Calculate mean and median values to compare differences between sports.
+pivot_wider(names_from=Sport,values_from = c(Mean,Median)) |># Convert long data to wide format; sports become. column names.
+mutate(d_mean=Mean_400m-Mean_Sprint,d_median=Median_400m-Median_Sprint) |> # Add two columns to clearly show the differences.
+select(variable,d_mean,d_median)|>   # keep only relevant variables to compare 400m specialists and sprinters.
+arrange(d_mean)  #sort rows in ascending order by value.
+# Hc: the first high difference is the mean; the difference between the two groups is quite obvious. 
+# Sprinters have higher Hc values than 400m specialists.
+# The second high difference is WCC; sprinters are higher than the 400m group.
+# The third difference is SSF; for this variable, 400m specialists are higher than sprinters.
+# Therefore, these three variables (Hc, WCC, and SSF) help to separate sprinters and 400m specialists.
+```
+```{r}
+# Step 2: Use mean bar plot to identify variables with differences.
+long_athlete <-athletes |>
+pivot_longer(      # In order to get different sports in different physical measurements and blood count data.
+   c("Ht", "Wt", "LBM", "RCC", "WCC", "Hc", "Hg", "Ferr", "BMI", "SSF", "Bfat"),  # Convert wide data to long format
+   names_to="variable",   # Define the column name.
+   values_to="value")     # Use the new dataset for plotting.
+long_athlete |>
+   group_by(Sport,variable) |>  # Prepare data for plotting
+summarise(Mean=mean(value,na.rm=TRUE) ) |> # Calculate mean to compare differences between two sports.
+
+ggplot(mapping=aes(x=Sport,y=Mean,fill=Sport))+  # Compare two sport groups using mean values with different colors.
+      geom_col(alpha=0.5)+
+      facet_wrap(vars(variable),scales="free")+  # Use facet_wrap to split by 11 variables.
+      labs(title = "Mean Comparsion Between 400m and Sprint Athletes") # Add plot title.
+# By inspecting the plot directly, the largest differences between 400m and Sprint athletes are in WCC, RCC, and Hc.
+# For SSF, although the numerical difference is large, the distance between sport groups is not obvious due to the scale.
+# Therefore, in the next step, the mean difference will be used to make the differences more clearly visible.
+```
+
+```{r}
+# Step 3: Mean difference bar plot
+long_athlete <-athletes |>
+pivot_longer(      # In order to get different sports in different physical measurements and blood count data.
+    c("Ht", "Wt", "LBM", "RCC", "WCC", "Hc", "Hg", "Ferr", "BMI", "SSF", "Bfat"),  # Convert wide data to long format.
+    names_to="variable",    # Define the column name.
+    values_to="value")      # Use the new dataset for plotting.
+long_athlete |>
+  group_by(Sport,variable) |>  # Prepare data for plotting.
+  summarise(Mean=mean(value,na.rm=TRUE) ) |> # Calculate mean to compare differences between two sports.
+
+# Convert to wide format so each variable has separate columns for each sport.
+pivot_wider(names_from="Sport",
+            values_from="Mean") |>
+mutate(diff=`400m`-Sprint) |> # Calculate the difference between 400m and Sprint.
+select(variable,diff) |> # Keep only relevant values.
+arrange(diff) |> # Sort differences in ascending order.
+
+# Create the bar plot of mean differences.
+ggplot(mapping=aes(x=variable,
+                   y=diff,
+                   fill= variable))+  
+geom_col(alpha=0.5)+
+labs(                        # Add axis labels,title with labs().
+    title = "Mean Differences Between 400m and Sprint Athletes",
+    x = "Variable",
+    y = "Mean Difference (400m - Sprint)"
+  )
+# From this plot, it is clear that in some aspects, Sprinters outperform 400m athletes, such as: Hc (highest difference), WCC (second largest difference).
+# In SSF, 400m athletes outperform Sprinters (third largest difference).
+# Therefore, the best three variables to separate Sprinters and 400m athletes are: Hc, WCC, and SSF.
+  
+```
+
+
