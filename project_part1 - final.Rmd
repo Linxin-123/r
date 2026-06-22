@@ -1,7 +1,3 @@
----
-title: "161.777 Practical Data Mining"
-author: "Linxin Guo"
-subtitle: Project part 1, 2026
 output:
   html_document: default
   pdf_document: default
